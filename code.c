@@ -431,6 +431,30 @@ int main(void) {
     double best_fit_global = fitnesses[curr_best_idx_gen0];
     copy_positions(population[curr_best_idx_gen0], best_positions);
     
+   
+    // Arquivo para o histórico do "melhor geracional" (mantendo a funcionalidade original para comparação)
+    FILE *f_best = fopen("history_advanced_best_of_gen.csv","w");
+    if (!f_best) {
+        perror("Erro ao abrir history_advanced_best_of_gen.csv");
+        fclose(f_complete);
+        return 1;
+    }
+    fprintf(f_best, "Generation,GlobalBestFitness,GenerationBestFitness");
+    for (int i = 0; i < cfg.N; ++i) {
+        for (int j = 0; j < cfg.N; ++j) {
+            fprintf(f_best, ",Gene_%d_%d", i, j);
+        }
+    }
+    fprintf(f_best, "\n");
+    
+    fprintf(f_best, "0,%f,%f", best_fit_global, best_fit_global); 
+    for (int i = 0; i < cfg.N; ++i) {
+        for (int j = 0; j < cfg.N; ++j) {
+            fprintf(f_best, ",%d", best_positions[i][j]);
+        }
+    }
+    fprintf(f_best, "\n");
+
     clock_t start_time = clock();
 
 
@@ -462,6 +486,14 @@ int main(void) {
         // **NOVA CHAMADA: Salva todos os indivíduos desta geração no histórico completo**
         append_complete_history_generation(f_complete, gen, population, fitnesses);
 
+        // **ESCREVE NO NOVO ARQUIVO DE "MELHOR GERACIONAL"**
+        fprintf(f_best, "%d,%f,%f", gen, best_fit_global, best_fit_generation);
+        for (int i = 0; i < cfg.N; ++i) {
+            for (int j = 0; j < cfg.N; ++j) {
+                fprintf(f_best, ",%d", population[curr_best_idx][i][j]);
+            }
+        }
+        fprintf(f_best, "\n");
         int cnt = 0, attempts = 0;
         while (cnt < cfg.POP_SIZE && attempts < 10 * cfg.POP_SIZE) {
             int p1 = select_parent(cfg.POP_SIZE, fitnesses, cfg.POP_SIZE + 1);

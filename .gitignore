@@ -1,0 +1,37 @@
+# Ambiente virtual (substitua 'venv' se o nome for diferente)
+venv/
+.env/
+
+# Arquivos de cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+ipynb_checkpoints/
+.ipynb_checkpoints/
+# Arquivos de log
+*.log
+
+# Arquivos de banco de dados locais
+*.sqlite3
+*.db
+
+# Configurações de IDEs/editors comuns
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Arquivos temporários do sistema operacional
+.DS_Store
+Thumbs.db
+
+# Arquivos de saída ou build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Arquivos de configuração pessoal
+*.env
+*.local
+*.csv

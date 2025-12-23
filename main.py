@@ -4,6 +4,7 @@ import threading
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import os
+import graph
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -21,50 +22,37 @@ class App(ctk.CTk):
         self.left_container = ctk.CTkFrame(self)
         self.left_container.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         
-        # Título fixo no topo
         self.label_title = ctk.CTkLabel(self.left_container, text="Configurações (setup.temp)", font=("Roboto", 20, "bold"))
         self.label_title.pack(pady=10)
 
-        # --- Área de Scroll para os Inputs (Para caber as matrizes) ---
         self.scroll_frame = ctk.CTkScrollableFrame(self.left_container, label_text="Parâmetros")
         self.scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Dicionários de armazenamento
         self.scalar_inputs = {}
         self.matrix_inputs = {}
         self.vector_inputs = {}
 
-        # 1. Cria inputs escalares (N, GEN, POP_SIZE...)
         self.create_scalar_inputs()
 
-        # 2. Botão para atualizar grades baseado em N inside do scroll
         self.btn_update_grid = ctk.CTkButton(self.scroll_frame, text="Gerar Grades (Baseado em N)", 
                                              command=self.generate_matrix_grids, fg_color="#3B8ED0")
         self.btn_update_grid.pack(pady=10, fill="x")
 
-        # 3. Container para Matrizes e Vetores
         self.matrices_container = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
         self.matrices_container.pack(fill="both", expand=True)
 
-        # --- Área de Botões Fixos (Rodapé do lado esquerdo) ---
         self.controls_frame = ctk.CTkFrame(self.left_container, fg_color="transparent")
         self.controls_frame.pack(fill="x", padx=5, pady=10)
 
-        # Botão Salvar
         self.btn_save = ctk.CTkButton(self.controls_frame, text="SALVAR ARQUIVO", command=self.save_setup, fg_color="gray")
         self.btn_save.pack(pady=5, fill="x")
 
-        # Botão Iniciar
         self.btn_start = ctk.CTkButton(self.controls_frame, text="INICIAR TREINAMENTO", command=self.start_process, fg_color="green")
         self.btn_start.pack(pady=5, fill="x")
 
-        # Botão Cancelar
         self.btn_stop = ctk.CTkButton(self.controls_frame, text="CANCELAR", command=self.stop_process, fg_color="red", state="disabled")
         self.btn_stop.pack(pady=5, fill="x")
 
-        # ===================================================
-        # --- LADO DIREITO (Gráfico e Logs) ---
-        # ===================================================
         self.right_frame = ctk.CTkFrame(self)
         self.right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         
@@ -87,21 +75,28 @@ class App(ctk.CTk):
         self.x_data = []
         self.y_data = []
 
-        # Tenta carregar dados existentes ao iniciar o app
         self.load_existing_setup()
-        self.plot_update_counter = 0  # Novo contador
-        self.plot_update_interval = 2 # Atualiza o gráfico a cada 10 dados recebidos (ajuste conforme necessário)
-    # ===================================================
-    # --- MÉTODOS DE INPUT E ARQUIVO ---
-    # ===================================================
+        self.plot_update_counter = 0
+        self.plot_update_interval = 2
+        
+    def load_full_graph_view(self):
+        # Remove tudo do painel direito
+        for widget in self.right_frame.winfo_children():
+            widget.destroy()
+
+        # Cria frame 100%
+        graph_container = ctk.CTkFrame(self.right_frame)
+        graph_container.pack(fill="both", expand=True)
+
+        # Injeta o conteúdo do graph.py
+        graph.build_graph_frame(graph_container)
+
     def update_graph(self, x, y):
-        # 1. Apenas adiciona os dados (operação muito rápida)
         self.x_data.append(float(x))
         self.y_data.append(float(y))
         
         self.plot_update_counter += 1
 
-        # 2. Só redesenha se atingir o intervalo
         if self.plot_update_counter >= self.plot_update_interval:
             self.line.set_data(self.x_data, self.y_data)
             self.ax.relim()
@@ -316,8 +311,6 @@ class App(ctk.CTk):
 
     def run_async_code(self, param):
         cmd = ["./genetic_solver.exe", ""] 
-        # Se estiver no Windows, as vezes é bom forçar o buffer off ou usar stdbuf no linux, 
-        # mas aqui vamos focar no Python.
 
         try:
             self.process = subprocess.Popen(
@@ -325,11 +318,10 @@ class App(ctk.CTk):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1 # Line buffered
+                bufsize=1
             )
 
             while True:
-                # O readline pode bloquear se o subprocesso não der flush
                 line = self.process.stdout.readline()
                 
                 if not line and self.process.poll() is not None:
@@ -345,26 +337,28 @@ class App(ctk.CTk):
                         except ValueError:
                             pass
                     else:
-                        # Logs normais (que não são dados brutos) podem ir para a caixa
                         self.after(0, self.log_message, line)
 
             rc = self.process.poll()
             self.after(0, self.log_message, f"Processo finalizado com código {rc}")
             
-            # Garante um desenho final para pegar os dados que sobraram no contador
             self.after(0, self.force_final_draw)
 
         except Exception as e:
             self.after(0, self.log_message, f"Erro: {str(e)}")
         finally:
             self.after(0, self.cleanup_state)
+        rc = self.process.poll()
+        self.after(0, self.log_message, f"Processo finalizado com código {rc}")
+        self.after(0, self.load_full_graph_view)
 
-    # Crie este método auxiliar para desenhar o resto dos dados ao final
+
     def force_final_draw(self):
         self.line.set_data(self.x_data, self.y_data)
         self.ax.relim()
         self.ax.autoscale_view()
         self.canvas.draw()
+
 if __name__ == "__main__":
     app = App()
     app.mainloop()
