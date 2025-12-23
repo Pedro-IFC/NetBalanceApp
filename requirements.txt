@@ -1,2 +1,4 @@
 customtkinter
 matplotlib
+pandas
+sklearn
