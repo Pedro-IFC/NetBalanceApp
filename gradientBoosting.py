@@ -12,4 +12,4 @@ y = df['Fitness']
 gb = GradientBoostingRegressor(random_state=42)
 gb.fit(X, y)
 
-#gb.predict
+gb.predict()

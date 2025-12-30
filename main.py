@@ -5,7 +5,6 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import os
 import graph
-
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 class App(ctk.CTk):

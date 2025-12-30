@@ -5,6 +5,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import csv
 import numpy as np
 import random
+import networkx as nx
 
 N = 20
 
@@ -328,19 +329,62 @@ class GeneticAlgoAnalyzer(ttk.Frame):
 
         canvas_width = self.graph_canvas.winfo_width()
         canvas_height = self.graph_canvas.winfo_height()
-        center_x, center_y = canvas_width / 2, canvas_height / 2
-        radius = min(center_x, center_y) * 0.85
+        
+        # Margem para os nós não ficarem colados na borda
+        padding = 50 
+        drawable_width = canvas_width - 2 * padding
+        drawable_height = canvas_height - 2 * padding
 
         self.node_coords.clear()
         self.node_items.clear()
         self.edge_items.clear()
 
+        # --- NOVA LÓGICA DE POSICIONAMENTO (NetworkX) ---
+        # 1. Criar um grafo abstrato para calcular a física
+        G = nx.Graph()
+        G.add_nodes_from(range(N))
         for i in range(N):
-            angle = 2 * np.pi * i / N - np.pi / 2
-            x = center_x + radius * np.cos(angle)
-            y = center_y + radius * np.sin(angle)
-            self.node_coords[i] = (x, y)
+            for j in range(i + 1, N):
+                if self.adjacency_matrix[i][j] == 1:
+                    G.add_edge(i, j)
+        
+        # 2. Calcular o layout (Posições x,y entre -1 e 1)
+        # 'spring_layout' simula molas: nós conectados se atraem, nós desconectados se repelem.
+        # Isso revela a estrutura natural, clusters e hierarquia visual.
+        # seed=42 garante que a posição não fique "pulando" aleatoriamente se os dados não mudarem.
+        pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+        
+        # Se preferir algo ainda mais separado, tente: pos = nx.kamada_kawai_layout(G)
 
+        # 3. Converter coordenadas normalizadas (-1 a 1) para Pixels do Canvas
+        # Encontrar min/max para normalizar corretamente caso o layout exceda -1/1
+        xs = [coords[0] for coords in pos.values()]
+        ys = [coords[1] for coords in pos.values()]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        for i in range(N):
+            norm_x, norm_y = pos[i]
+            
+            # Normalização matemática para escala 0.0 a 1.0
+            if max_x != min_x:
+                scaled_x = (norm_x - min_x) / (max_x - min_x)
+            else:
+                scaled_x = 0.5
+                
+            if max_y != min_y:
+                scaled_y = (norm_y - min_y) / (max_y - min_y)
+            else:
+                scaled_y = 0.5
+
+            # Aplicar ao tamanho do canvas com margem
+            final_x = padding + scaled_x * drawable_width
+            final_y = padding + scaled_y * drawable_height
+            
+            self.node_coords[i] = (final_x, final_y)
+        # -----------------------------------------------
+
+        # O restante do código de desenho (Edges e Nodes) permanece igual
         for i in range(N):
             for j in range(i + 1, N):
                 if self.adjacency_matrix[i][j] == 1:
@@ -357,11 +401,11 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                 x - node_radius, y - node_radius, x + node_radius, y + node_radius,
                 fill='skyblue', outline='black', width=1.5, tags=node_tag
             )
+            # Texto preto para melhor contraste
             self.graph_canvas.create_text(x, y, text=str(i), font=("Arial", 8, "bold"), tags=node_tag)
             self.node_items[i] = oval
             self.graph_canvas.tag_bind(node_tag, '<Enter>', lambda e, node_id=i: self._on_node_enter(node_id))
             self.graph_canvas.tag_bind(node_tag, '<Leave>', self._on_node_leave)
-
     def _update_graph_node_colors(self):
         """Atualiza a cor dos nós do grafo com base em seu estado ativo."""
         for i in self.node_items:
