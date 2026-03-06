@@ -23,7 +23,7 @@ def generate_tester(min_matrix, max_matrix):
             tester[j][i] = v 
     return tester
 
-def load_history_data(filepath="history_advanced_best_of_gen.csv"):
+def load_history_data(filepath="./files/history_advanced_best_of_gen.csv"):
     generations, global_fitness, generational_fitness, genes_history = [], [], [], []
     try:
         with open(filepath, newline='', encoding="utf-8") as csvfile:
@@ -38,7 +38,7 @@ def load_history_data(filepath="history_advanced_best_of_gen.csv"):
         print(f"Erro: O arquivo '{filepath}' não foi encontrado.")
     return generations, global_fitness, generational_fitness, genes_history
 
-def load_tester_matrices(filepath="tester.csv"):
+def load_tester_matrices(filepath="./files/tester.csv"):
     min_matrix = [[0.0] * N for _ in range(N)]
     max_matrix = [[0.0] * N for _ in range(N)]
     try:
@@ -56,7 +56,7 @@ def load_tester_matrices(filepath="tester.csv"):
         return None, None
     return min_matrix, max_matrix
 
-def load_b_vector(filepath="b_vector.csv"):
+def load_b_vector(filepath="./files/b_vector.csv"):
     b_vector = []
     try:
         with open(filepath, newline='', encoding="utf-8") as csvfile:

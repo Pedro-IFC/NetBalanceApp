@@ -80,6 +80,34 @@ void trim(char *s) {
     memmove(s, p, l + 1);
 }
 
+// --- Nova Função de Validação ---
+int validar_conectividade_dados(int **p) {
+    for (int i = 0; i < cfg.N; ++i) {
+        for (int j = i + 1; j < cfg.N; ++j) {
+            // Se existe previsão de troca de dados entre os nodos
+            if (max_matrix[i][j] > 0) {
+                
+                // 1. Verifica se são diretamente ligados
+                if (p[i][j] == 1) continue; 
+                
+                // 2. Se não são, verifica se possuem um nodo intermediário em comum
+                int tem_intermediario = 0;
+                for (int k = 0; k < cfg.N; ++k) {
+                    if (k != i && k != j && p[i][k] == 1 && p[k][j] == 1) {
+                        tem_intermediario = 1;
+                        break; // Encontrou um intermediário, atende à regra
+                    }
+                }
+                
+                // Se não há ligação direta E não há intermediário, a matriz é inválida
+                if (!tem_intermediario) {
+                    return 0; // Falso (Inválido)
+                }
+            }
+        }
+    }
+    return 1; // Verdadeiro (Válido)
+}
 void carregar_setup(const char *arquivo) {
     FILE *f = fopen(arquivo, "r");
     if (!f) { perror("Erro ao abrir setup.temp"); exit(1); }
@@ -251,6 +279,13 @@ void enforce_connection_limits(int **p, const int *max_limits) {
 // --- Fitness (OTIMIZADO: Recebe buffers) ---
 double fitness(int **positions, double ***testers, int num_testers, int loops, 
                double **buf_A, double *buf_sol, double **buf_aug) {
+                   
+    // NOVA REGRA: Validação de proximidade de troca de dados
+    // Se falhar na regra estrutural, o fitness é 0.
+    if (!validar_conectividade_dados(positions)) {
+        return 0.0; 
+    }
+
     double final_point = 0.0;
     
     for (int f=0; f<loops; ++f) {
@@ -319,7 +354,7 @@ int select_parent(int pop, const double *fitnesses, int exclude) {
 }
 
 void save_tester_config() {
-    FILE *f = fopen("tester.csv", "w");
+    FILE *f = fopen("./files/tester.csv", "w");
     if (!f) return;
     fprintf(f, "i,j,min_value,max_value\n");
     for (int i = 0; i < cfg.N; ++i) for (int j = 0; j < cfg.N; ++j) 
@@ -328,7 +363,7 @@ void save_tester_config() {
 }
 
 void save_b_vector() {
-    FILE *f = fopen("b_vector.csv", "w");
+    FILE *f = fopen("./files/b_vector.csv", "w");
     if (!f) return;
     fprintf(f, "index,value\n");
     for (int i = 0; i < cfg.N; ++i) fprintf(f, "%d,%.1f\n", i, b_vector[i]);
@@ -373,7 +408,7 @@ int main(void) {
             if (i != j && max_matrix[i][j] > 0 && min_matrix[i][j] > 0) min_connections_per_node[i]++;
         }
     }
-    
+    /*
     int has_conflict = 0;
     for (int i = 0; i < cfg.N; ++i) {
         if (min_connections_per_node[i] > max_connections_per_node[i]) {
@@ -381,7 +416,7 @@ int main(void) {
             has_conflict = 1; 
         }
     }
-    if(has_conflict) return 1;
+    if(has_conflict) return 1; */
 
     // 2. Alocações Principais
     int ***population = alocar_populacao(cfg.POP_SIZE, cfg.N);
@@ -408,7 +443,7 @@ int main(void) {
     save_tester_config();
     save_b_vector();
     // Prepara o arquivo de histórico completo
-    FILE *f_complete = fopen("history_advanced_complete.csv", "w");
+    FILE *f_complete = fopen("./files/history_advanced_complete.csv", "w");
     if (!f_complete) {
         perror("Erro ao abrir history_advanced_complete.csv");
         return 1;
@@ -433,7 +468,7 @@ int main(void) {
     
    
     // Arquivo para o histórico do "melhor geracional" (mantendo a funcionalidade original para comparação)
-    FILE *f_best = fopen("history_advanced_best_of_gen.csv","w");
+    FILE *f_best = fopen("./files/history_advanced_best_of_gen.csv","w");
     if (!f_best) {
         perror("Erro ao abrir history_advanced_best_of_gen.csv");
         fclose(f_complete);
