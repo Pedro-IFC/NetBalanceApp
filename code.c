@@ -79,34 +79,48 @@ void trim(char *s) {
     while(*p && isspace(*p)) ++p, --l;
     memmove(s, p, l + 1);
 }
+int find_root(int *parent, int i) {
+    if (parent[i] == i) return i;
+    return parent[i] = find_root(parent, parent[i]); 
+}
 
-// --- Nova Função de Validação ---
+// Verifica se existe QUALQUER caminho entre os nodos que exigem troca de dados
 int validar_conectividade_dados(int **p) {
+    // Usamos um VLA (Variable Length Array) alocado na stack da memória.
+    // Isso evita o uso de 'malloc/free' dentro do loop de avaliação, garantindo alta performance.
+    int parent[cfg.N]; 
+    
+    // 1. Inicializa cada nodo como isolado (pai de si mesmo)
+    for (int i = 0; i < cfg.N; ++i) {
+        parent[i] = i;
+    }
+
+    // 2. Constrói a teia de conexões do indivíduo atual (Union)
     for (int i = 0; i < cfg.N; ++i) {
         for (int j = i + 1; j < cfg.N; ++j) {
-            // Se existe previsão de troca de dados entre os nodos
-            if (max_matrix[i][j] > 0) {
-                
-                // 1. Verifica se são diretamente ligados
-                if (p[i][j] == 1) continue; 
-                
-                // 2. Se não são, verifica se possuem um nodo intermediário em comum
-                int tem_intermediario = 0;
-                for (int k = 0; k < cfg.N; ++k) {
-                    if (k != i && k != j && p[i][k] == 1 && p[k][j] == 1) {
-                        tem_intermediario = 1;
-                        break; // Encontrou um intermediário, atende à regra
-                    }
-                }
-                
-                // Se não há ligação direta E não há intermediário, a matriz é inválida
-                if (!tem_intermediario) {
-                    return 0; // Falso (Inválido)
+            if (p[i][j] == 1) { // Se há um cabo ligando os dois
+                int root_i = find_root(parent, i);
+                int root_j = find_root(parent, j);
+                if (root_i != root_j) {
+                    parent[root_i] = root_j; // Funde os dois grupos em um só
                 }
             }
         }
     }
-    return 1; // Verdadeiro (Válido)
+
+    // 3. Testa a restrição principal
+    for (int i = 0; i < cfg.N; ++i) {
+        for (int j = i + 1; j < cfg.N; ++j) {
+            if (max_matrix[i][j] > 0) { // Se esses dois nodos precisam se comunicar
+                // Eles DEVEM estar no mesmo grupo/componente conectado
+                if (find_root(parent, i) != find_root(parent, j)) {
+                    return 0; // Falso (Inválido): A rede está "partida" entre eles
+                }
+            }
+        }
+    }
+    
+    return 1; // Verdadeiro: Todas as exigências de dados possuem um caminho pela rede
 }
 void carregar_setup(const char *arquivo) {
     FILE *f = fopen(arquivo, "r");

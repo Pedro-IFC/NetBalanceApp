@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import csv
 import numpy as np
 import random
@@ -70,6 +72,7 @@ def load_b_vector(filepath="./files/b_vector.csv"):
         print(f"Erro ao processar o arquivo '{filepath}': {e}")
         return []
     return b_vector
+
 class GeneticAlgoAnalyzer(ttk.Frame):
     def __init__(self, parent, generations, global_fitness,
                  generational_fitness, genes_history,
@@ -205,7 +208,7 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         self.simulation_fitness_label.pack(pady=15)
 
     def _create_graph_panel(self):
-        frame = ttk.LabelFrame(self.scrollable_frame, text="Visualização do Grafo de Conexões", padding="10")
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Visualização do Grafo de Conexões (Verde = Bom Fitness/Influência)", padding="10")
         frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=5)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
@@ -217,6 +220,10 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         self.node_items = {}
         self.edge_items = {}
         self.adjacency_matrix = []
+        
+        # Dicionários para armazenar a cor real (fitness) de cada elemento
+        self.node_base_colors = {}
+        self.edge_base_colors = {}
 
     def _initial_display_update(self):
         if self.generations:
@@ -321,16 +328,66 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                 f"{abs_diff:9.4f}", perc_str
             ))
             
+    def get_color_from_value(self, val, vmin, vmax):
+        """Mapeia um valor para uma cor HEX em um gradiente do Vermelho (pior) para Verde (melhor)"""
+        if vmax == vmin:
+            norm = 0.5
+        else:
+            norm = (val - vmin) / (vmax - vmin)
+        norm = max(0.0, min(1.0, norm))
+        rgba = cm.RdYlGn(norm)
+        return mcolors.to_hex(rgba)
+
     def update_graph_display(self, generation_index):
         self.graph_canvas.delete("all")
         
         genes_flat = self.genes_history[generation_index]
         self.adjacency_matrix = [genes_flat[i:i+N] for i in range(0, len(genes_flat), N)]
 
+        # --- LÓGICA DE CÁLCULO DE FITNESS PARA COR DE NÓS E ARESTAS ---
+        positions = np.array(self.adjacency_matrix)
+        random.seed(0) 
+        tester = np.array(generate_tester(self.min_matrix, self.max_matrix))
+        A_base = positions * tester
+        b_base = np.array(self.b_vector, dtype=float)
+        
+        base_fitness = self.calculate_fitness_py(A_base, b_base)
+        
+        node_impacts = {}
+        for i in range(N):
+            A_sim = A_base.copy()
+            b_sim = b_base.copy()
+            A_sim[i, :] = 0.0
+            A_sim[:, i] = 0.0
+            b_sim[i] = 0.0
+            A_sim[i][i] = 1
+            fit = self.calculate_fitness_py(A_sim, b_sim)
+            # O impacto é o quanto o fitness cai se removermos o nó (maior impacto = mais importante)
+            node_impacts[i] = base_fitness - fit  
+
+        edge_impacts = {}
+        for i in range(N):
+            for j in range(i + 1, N):
+                if self.adjacency_matrix[i][j] == 1:
+                    A_sim = A_base.copy()
+                    A_sim[i, j] = 0.0
+                    A_sim[j, i] = 0.0
+                    fit = self.calculate_fitness_py(A_sim, b_base)
+                    edge_impacts[(i, j)] = base_fitness - fit
+
+        # Mapeando os impactos para Cores
+        min_node = min(node_impacts.values()) if node_impacts else 0
+        max_node = max(node_impacts.values()) if node_impacts else 0
+        self.node_base_colors = {i: self.get_color_from_value(node_impacts[i], min_node, max_node) for i in range(N)}
+        
+        min_edge = min(edge_impacts.values()) if edge_impacts else 0
+        max_edge = max(edge_impacts.values()) if edge_impacts else 0
+        self.edge_base_colors = {e: self.get_color_from_value(edge_impacts[e], min_edge, max_edge) for e in edge_impacts}
+        # ----------------------------------------------------------------
+
         canvas_width = self.graph_canvas.winfo_width()
         canvas_height = self.graph_canvas.winfo_height()
         
-        # Margem para os nós não ficarem colados na borda
         padding = 50 
         drawable_width = canvas_width - 2 * padding
         drawable_height = canvas_height - 2 * padding
@@ -339,8 +396,7 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         self.node_items.clear()
         self.edge_items.clear()
 
-        # --- NOVA LÓGICA DE POSICIONAMENTO (NetworkX) ---
-        # 1. Criar um grafo abstrato para calcular a física
+        # Posicionamento via NetworkX
         G = nx.Graph()
         G.add_nodes_from(range(N))
         for i in range(N):
@@ -348,16 +404,8 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                 if self.adjacency_matrix[i][j] == 1:
                     G.add_edge(i, j)
         
-        # 2. Calcular o layout (Posições x,y entre -1 e 1)
-        # 'spring_layout' simula molas: nós conectados se atraem, nós desconectados se repelem.
-        # Isso revela a estrutura natural, clusters e hierarquia visual.
-        # seed=42 garante que a posição não fique "pulando" aleatoriamente se os dados não mudarem.
         pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
         
-        # Se preferir algo ainda mais separado, tente: pos = nx.kamada_kawai_layout(G)
-
-        # 3. Converter coordenadas normalizadas (-1 a 1) para Pixels do Canvas
-        # Encontrar min/max para normalizar corretamente caso o layout exceda -1/1
         xs = [coords[0] for coords in pos.values()]
         ys = [coords[1] for coords in pos.values()]
         min_x, max_x = min(xs), max(xs)
@@ -366,7 +414,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         for i in range(N):
             norm_x, norm_y = pos[i]
             
-            # Normalização matemática para escala 0.0 a 1.0
             if max_x != min_x:
                 scaled_x = (norm_x - min_x) / (max_x - min_x)
             else:
@@ -377,41 +424,43 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             else:
                 scaled_y = 0.5
 
-            # Aplicar ao tamanho do canvas com margem
             final_x = padding + scaled_x * drawable_width
             final_y = padding + scaled_y * drawable_height
             
             self.node_coords[i] = (final_x, final_y)
-        # -----------------------------------------------
 
-        # O restante do código de desenho (Edges e Nodes) permanece igual
+        # Desenhar Arestas (Coloridas de acordo com a influência da conexão)
         for i in range(N):
             for j in range(i + 1, N):
                 if self.adjacency_matrix[i][j] == 1:
                     x1, y1 = self.node_coords[i]
                     x2, y2 = self.node_coords[j]
-                    edge = self.graph_canvas.create_line(x1, y1, x2, y2, fill='lightgrey', width=1.5)
+                    color = self.edge_base_colors.get((i, j), 'lightgrey')
+                    edge = self.graph_canvas.create_line(x1, y1, x2, y2, fill=color, width=2.0)
                     self.edge_items[(i, j)] = edge
 
+        # Desenhar Nós (Coloridos de acordo com o fitness individual)
         node_radius = 12
         for i in range(N):
             x, y = self.node_coords[i]
             node_tag = f"node_{i}"
+            color = self.node_base_colors.get(i, 'skyblue')
             oval = self.graph_canvas.create_oval(
                 x - node_radius, y - node_radius, x + node_radius, y + node_radius,
-                fill='skyblue', outline='black', width=1.5, tags=node_tag
+                fill=color, outline='black', width=1.5, tags=node_tag
             )
-            # Texto preto para melhor contraste
             self.graph_canvas.create_text(x, y, text=str(i), font=("Arial", 8, "bold"), tags=node_tag)
             self.node_items[i] = oval
             self.graph_canvas.tag_bind(node_tag, '<Enter>', lambda e, node_id=i: self._on_node_enter(node_id))
             self.graph_canvas.tag_bind(node_tag, '<Leave>', self._on_node_leave)
+
     def _update_graph_node_colors(self):
-        """Atualiza a cor dos nós do grafo com base em seu estado ativo."""
+        """Atualiza a cor dos nós do grafo com base em seu estado ativo e seu fitness original."""
         for i in self.node_items:
             node_item = self.node_items[i]
             if self.active_nodes[i].get():
-                self.graph_canvas.itemconfig(node_item, fill='skyblue', outline='black')
+                color = self.node_base_colors.get(i, 'skyblue')
+                self.graph_canvas.itemconfig(node_item, fill=color, outline='black')
             else:
                 self.graph_canvas.itemconfig(node_item, fill='grey', outline='darkgrey')
 
@@ -419,24 +468,30 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         if not self.active_nodes[node_id].get():
             return
 
+        # Esmaecer todos para dar foco
         for i in self.node_items:
             self.graph_canvas.itemconfig(self.node_items[i], fill='#f0f0f0', outline='lightgrey')
         for edge in self.edge_items.values():
             self.graph_canvas.itemconfig(edge, fill='#f0f0f0')
 
-        self.graph_canvas.itemconfig(self.node_items[node_id], fill='royalblue')
+        # Destaque o nó em azul (para não confundir com Vermelho/Verde do fitness)
+        self.graph_canvas.itemconfig(self.node_items[node_id], fill='blue', outline='black')
 
         for neighbor_id in range(N):
             if self.adjacency_matrix[node_id][neighbor_id] == 1 and node_id != neighbor_id:
                 edge_key = tuple(sorted((node_id, neighbor_id)))
                 if edge_key in self.edge_items:
-                    self.graph_canvas.itemconfig(self.edge_items[edge_key], fill='red', width=2.5)
+                    self.graph_canvas.itemconfig(self.edge_items[edge_key], fill='black', width=2.5)
                 
-                self.graph_canvas.itemconfig(self.node_items[neighbor_id], fill='lightgreen')
+                self.graph_canvas.itemconfig(self.node_items[neighbor_id], fill='cyan', outline='black')
                 
     def _on_node_leave(self, event):
-        for edge in self.edge_items.values():
-            self.graph_canvas.itemconfig(edge, fill='lightgrey', width=1.5)
+        # Retornar as cores originais das arestas
+        for edge_key, edge in self.edge_items.items():
+            color = self.edge_base_colors.get(edge_key, 'lightgrey')
+            self.graph_canvas.itemconfig(edge, fill=color, width=2.0)
+        
+        # Retornar as cores originais dos nós
         self._update_graph_node_colors()
 
     def on_slider_change(self, val):
