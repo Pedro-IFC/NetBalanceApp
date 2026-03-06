@@ -111,7 +111,7 @@ int validar_conectividade_dados(int **p) {
     // 3. Testa a restrição principal
     for (int i = 0; i < cfg.N; ++i) {
         for (int j = i + 1; j < cfg.N; ++j) {
-            if (max_matrix[i][j] > 0) { // Se esses dois nodos precisam se comunicar
+            if (min_matrix[i][j] > 0) { // Se esses dois nodos precisam se comunicar
                 // Eles DEVEM estar no mesmo grupo/componente conectado
                 if (find_root(parent, i) != find_root(parent, j)) {
                     return 0; // Falso (Inválido): A rede está "partida" entre eles

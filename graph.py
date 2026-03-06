@@ -9,8 +9,20 @@ import numpy as np
 import random
 import networkx as nx
 
-N = 20
+def load_n_from_setup(filename):
+    with open(filename, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('N='):
+                return int(line.split('=')[1])
+    return None # Retorna None se não encontrar
 
+N = load_n_from_setup('setup.temp')
+
+if N:
+    print(f"Valor de N carregado: {N}")
+else:
+    print("Não foi possível encontrar o valor de N.")
 def generate_tester(min_matrix, max_matrix):
     tester = [[0.0] * N for _ in range(N)]
     for i in range(N):
