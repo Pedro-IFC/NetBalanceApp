@@ -6,69 +6,136 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import csv
 import numpy as np
-import random
 import networkx as nx
+import os # Adicionado para verificar a existência do arquivo pareto_front.csv
+
+def load_scalar_from_setup(filename, key):
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if '=' not in line:
+                    continue
+                current_key, value = line.split('=', 1)
+                if current_key.strip() == key:
+                    return value.strip()
+    except FileNotFoundError:
+        pass
+    return None
 
 def load_n_from_setup(filename):
-    with open(filename, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('N='):
-                return int(line.split('=')[1])
-    return None # Retorna None se não encontrar
+    value = load_scalar_from_setup(filename, 'N')
+    return int(value) if value is not None else None
 
 N = load_n_from_setup('setup.temp')
+FITNESS_MODEL = (load_scalar_from_setup('setup.temp', 'fitness_model') or 'linear').lower()
 
 if N:
     print(f"Valor de N carregado: {N}")
 else:
     print("Não foi possível encontrar o valor de N.")
-def generate_tester(min_matrix, max_matrix):
-    tester = [[0.0] * N for _ in range(N)]
-    for i in range(N):
-        for j in range(i, N):
-            min_val = int(min_matrix[i][j])
-            max_val = int(max_matrix[i][j])
-            v = 0.0
-            if max_val > 0 and max_val >= min_val:
-                steps = (max_val - min_val) // 10 + 1
-                v = float(min_val + 10 * random.randint(0, steps - 1))
-            tester[i][j] = v
-            tester[j][i] = v 
-    return tester
+
+def force_zero_diagonal(matrix):
+    np.fill_diagonal(matrix, 0.0)
+    return matrix
+
+def linear_metric_label():
+    if FITNESS_MODEL == "analitica":
+        return "Fluxo Total da Rede"
+    return "Desempenho do Sistema Linear (1 / |x|)"
+
+def load_matrix_section(filename, section_name):
+    matrix = []
+    in_section = False
+
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    if in_section and matrix:
+                        break
+                    continue
+
+                if line.startswith("[") and line.endswith("]"):
+                    current_section = line[1:-1]
+                    if in_section:
+                        break
+                    in_section = current_section == section_name
+                    continue
+
+                if in_section:
+                    matrix.append([float(value) for value in line.split()])
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        return None
+
+    if len(matrix) != N or any(len(row) != N for row in matrix):
+        return None
+
+    return force_zero_diagonal(np.array(matrix, dtype=float))
+
+def load_matrix_from_csv(filepath, n, value_field="value"):
+    matrix = np.zeros((n, n), dtype=float)
+    seen = 0
+    try:
+        with open(filepath, newline='', encoding="utf-8") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                i = int(row["i"])
+                j = int(row["j"])
+                value = float(row[value_field])
+                if 0 <= i < n and 0 <= j < n:
+                    matrix[i, j] = value
+                    seen += 1
+    except (FileNotFoundError, ValueError, KeyError):
+        return None
+
+    if seen < n * n:
+        return None
+    return force_zero_diagonal(matrix)
+
+def load_reference_matrix(filename):
+    value_matrix = load_matrix_section(filename, "VALUE_MATRIX")
+    if value_matrix is not None:
+        return value_matrix
+
+    min_matrix = load_matrix_section(filename, "MIN_MATRIX")
+    max_matrix = load_matrix_section(filename, "MAX_MATRIX")
+    if min_matrix is None or max_matrix is None:
+        return load_matrix_from_csv("./files/value_matrix.csv", N)
+
+    return force_zero_diagonal((min_matrix + max_matrix) / 2.0)
 
 def load_history_data(filepath="./files/history_advanced_best_of_gen.csv"):
     generations, global_fitness, generational_fitness, genes_history = [], [], [], []
     try:
         with open(filepath, newline='', encoding="utf-8") as csvfile:
             reader = csv.reader(csvfile)
-            next(reader, None)
+            header = next(reader, None)
+            if not header:
+                return generations, global_fitness, generational_fitness, genes_history
+
+            try:
+                generation_idx = header.index("Generation")
+                global_linear_idx = header.index("GlobalBest_Linear")
+                gen_linear_idx = header.index("GenBest_Linear")
+                gene_start_idx = next(i for i, name in enumerate(header) if name.startswith("Gene_"))
+            except (ValueError, StopIteration):
+                return generations, global_fitness, generational_fitness, genes_history
+
             for row in reader:
-                generations.append(int(row[0]))
-                global_fitness.append(float(row[1]))
-                generational_fitness.append(float(row[2]))
-                genes_history.append([int(g) for g in row[3:]])
+                if len(row) < gene_start_idx:
+                    continue
+                generations.append(int(row[generation_idx]))
+                global_fitness.append(float(row[global_linear_idx]))
+                generational_fitness.append(float(row[gen_linear_idx]))
+                genes_history.append([float(g) for g in row[gene_start_idx:]])
+                
     except FileNotFoundError:
         print(f"Erro: O arquivo '{filepath}' não foi encontrado.")
     return generations, global_fitness, generational_fitness, genes_history
-
-def load_tester_matrices(filepath="./files/tester.csv"):
-    min_matrix = [[0.0] * N for _ in range(N)]
-    max_matrix = [[0.0] * N for _ in range(N)]
-    try:
-        with open(filepath, newline='', encoding="utf-8") as csvfile:
-            reader = csv.reader(csvfile)
-            next(reader, None)
-            for row in reader:
-                i, j, min_val, max_val = map(float, row)
-                min_matrix[int(i)][int(j)] = min_val
-                min_matrix[int(j)][int(i)] = min_val
-                max_matrix[int(i)][int(j)] = max_val
-                max_matrix[int(j)][int(i)] = max_val
-    except FileNotFoundError:
-        print(f"Erro: O arquivo '{filepath}' não foi encontrado.")
-        return None, None
-    return min_matrix, max_matrix
 
 def load_b_vector(filepath="./files/b_vector.csv"):
     b_vector = []
@@ -85,19 +152,69 @@ def load_b_vector(filepath="./files/b_vector.csv"):
         return []
     return b_vector
 
+def load_b_vector_from_setup(filename):
+    in_section = False
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    if in_section:
+                        break
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    if in_section:
+                        break
+                    in_section = (line[1:-1] == "B_VECTOR")
+                    continue
+                if in_section:
+                    values = [float(value) for value in line.split()]
+                    if len(values) == N:
+                        return values
+                    return []
+    except (FileNotFoundError, ValueError):
+        return []
+    return []
+
+def collect_graph_data():
+    generations, global_fitness, generational_fitness, genes_history = load_history_data()
+    value_matrix = load_reference_matrix("setup.temp")
+    b_vector = load_b_vector()
+    if not b_vector:
+        b_vector = load_b_vector_from_setup("setup.temp")
+
+    missing = []
+    if not generations:
+        missing.append("historico")
+    if value_matrix is None:
+        missing.append("matriz de referencia")
+    if not b_vector:
+        missing.append("vetor b")
+
+    return {
+        "generations": generations,
+        "global_fitness": global_fitness,
+        "generational_fitness": generational_fitness,
+        "genes_history": genes_history,
+        "value_matrix": value_matrix,
+        "b_vector": b_vector,
+        "missing": missing,
+    }
+
 class GeneticAlgoAnalyzer(ttk.Frame):
     def __init__(self, parent, generations, global_fitness,
                  generational_fitness, genes_history,
-                 min_matrix, max_matrix, b_vector):
+                 value_matrix, b_vector):
         super().__init__(parent)
 
         self.generations = generations
         self.global_fitness = global_fitness
         self.generational_fitness = generational_fitness
         self.genes_history = genes_history
-        self.min_matrix = min_matrix
-        self.max_matrix = max_matrix
+        self.graph_positions = None
+        self.value_matrix = np.array(value_matrix, dtype=float) if value_matrix is not None else None
         self.b_vector = b_vector
+        self.fitness_model = FITNESS_MODEL
         self.initial_solution_x = self._calculate_solution(0)
         self.active_nodes = [tk.BooleanVar(value=True) for _ in range(N)]
 
@@ -132,6 +249,7 @@ class GeneticAlgoAnalyzer(ttk.Frame):
 
     def _create_widgets(self):
         self._create_fitness_panel()
+        self._create_pareto_panel()   # NOVO: Painel de Pareto integrado
         self._create_genes_panel()
         self._create_solution_panel()
         self._create_simulation_panel()
@@ -144,7 +262,7 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         ax.plot(self.generations, self.global_fitness, label="Melhor Fitness Global", color='blue')
         ax.plot(self.generations, self.generational_fitness, label="Fitness Geracional", color='red', alpha=0.7)
         ax.set_xlabel("Geração")
-        ax.set_ylabel("Fitness")
+        ax.set_ylabel(linear_metric_label())
         ax.legend()
         ax.grid(True)
         plt.tight_layout()
@@ -152,15 +270,55 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+    def _create_pareto_panel(self):
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Fronteira de Pareto (Trade-off de Objetivos)", padding="10")
+        # Inserido na row=1
+        frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        
+        fig, ax = plt.subplots(figsize=(10, 4)) 
+        
+        linear_fits, path_fits = [], []
+        filepath = "./files/pareto_front.csv"
+        if not os.path.exists(filepath):
+            filepath = "./files/pareto_front.csv"
+            
+        try:
+            if os.path.exists(filepath):
+                with open(filepath, "r", encoding="utf-8") as f:
+                    reader = csv.reader(f)
+                    header = next(reader, None)
+                    linear_idx = header.index("Fitness_Linear") if header and "Fitness_Linear" in header else 1
+                    path_idx = header.index("Fitness_Path") if header and "Fitness_Path" in header else 2
+                    for row in reader:
+                        if len(row) > max(linear_idx, path_idx):
+                            linear_fits.append(float(row[linear_idx]))
+                            path_fits.append(float(row[path_idx]))
+        except Exception as e:
+            print(f"Erro ao carregar Pareto no graph.py: {e}")
+
+        if linear_fits:
+            ax.scatter(linear_fits, path_fits, color='teal', edgecolors='black', s=50, alpha=0.85)
+            
+        ax.set_xlabel(linear_metric_label())
+        ax.set_ylabel("Qualidade de Caminho")
+        ax.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
     def _create_genes_panel(self):
         frame = ttk.LabelFrame(self.scrollable_frame, text="Visualização dos Genes e Controles", padding="10")
-        frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        # Deslocado para row=2
+        frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
 
         controls_frame = ttk.Frame(frame)
         controls_frame.pack(pady=5, fill=tk.X)
         
         self.slider = tk.Scale(controls_frame, from_=0, to=len(self.generations)-1, orient=tk.HORIZONTAL,
-                                command=self.on_slider_change, label="Selecione a Geração")
+                       label="Selecione a Geração")
+        self.slider.bind("<ButtonRelease-1>", self.on_slider_change) # Só atualiza ao soltar o clique
         self.slider.pack(pady=5, fill=tk.X, expand=True)
         
         entry_frame = ttk.Frame(controls_frame)
@@ -175,7 +333,8 @@ class GeneticAlgoAnalyzer(ttk.Frame):
 
     def _create_solution_panel(self):
         frame = ttk.LabelFrame(self.scrollable_frame, text="Comparação da Solução do Vetor X", padding="10")
-        frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        # Deslocado para row=3
+        frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
 
@@ -202,7 +361,8 @@ class GeneticAlgoAnalyzer(ttk.Frame):
 
     def _create_simulation_panel(self):
         frame = ttk.LabelFrame(self.scrollable_frame, text="Simulação de Desligamento de Nós", padding="10")
-        frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
+        # Deslocado para row=4
+        frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=5)
 
         center_wrapper_frame = ttk.Frame(frame)
         center_wrapper_frame.pack(pady=5, fill="x")
@@ -221,7 +381,8 @@ class GeneticAlgoAnalyzer(ttk.Frame):
 
     def _create_graph_panel(self):
         frame = ttk.LabelFrame(self.scrollable_frame, text="Visualização do Grafo de Conexões (Verde = Bom Fitness/Influência)", padding="10")
-        frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=5)
+        # Deslocado para row=5
+        frame.grid(row=5, column=0, sticky="nsew", padx=10, pady=5)
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
 
@@ -245,35 +406,60 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             self.after(100, lambda: self.update_displays(initial_idx))
     
     def calculate_fitness_py(self, A_matrix, b_vector):
-        try:
-            sol = np.linalg.solve(A_matrix, b_vector)
-            total_abs = np.sum(np.abs(sol))
-            if total_abs == 0.0:
-                return 0.0
-            return 10.0 / total_abs
-        except np.linalg.LinAlgError:
+        sol = self._solve_for_current_model(np.array(A_matrix, dtype=float), np.array(b_vector, dtype=float))
+        if sol is None:
             return 0.0
+        if self.fitness_model == "analitica":
+            return float(np.sum(sol))
+        total_abs = np.sum(np.abs(sol))
+        if total_abs == 0.0:
+            return 0.0
+        return 1.0 / total_abs
+
+    def _infer_uniform_c(self, A_matrix):
+        upper_values = A_matrix[np.triu_indices(N, k=1)]
+        positive_values = upper_values[upper_values > 1e-12]
+        if positive_values.size == 0:
+            diag_values = np.diag(A_matrix)
+            positive_values = diag_values[diag_values > 1e-12]
+        if positive_values.size == 0:
+            return 0.0
+        return float(np.mean(positive_values))
+
+    def _solve_for_current_model(self, A_matrix, b_vector):
+        if self.fitness_model == "analitica":
+            if N <= 1:
+                return np.zeros_like(b_vector, dtype=float)
+            c = self._infer_uniform_c(A_matrix)
+            if c <= 1e-12:
+                return None
+            s_total = float(np.sum(b_vector))
+            term = s_total / (N - 1.0)
+            return (term - b_vector) / c
+
+        try:
+            return np.linalg.solve(A_matrix, b_vector)
+        except np.linalg.LinAlgError:
+            return None
 
     def update_simulation_fitness(self):
         gen_index = self.slider.get()
-        if not self.min_matrix or gen_index >= len(self.genes_history):
+        if self.value_matrix is None or gen_index >= len(self.genes_history):
             self.simulation_fitness_label.config(text="Fitness Simulado: Erro")
             return
 
         genes_flat = self.genes_history[gen_index]
         positions = np.array([genes_flat[i:i+N] for i in range(0, len(genes_flat), N)])
-        
-        random.seed(0) 
-        tester = np.array(generate_tester(self.min_matrix, self.max_matrix))
 
-        A_sim = positions * tester
+        A_sim = positions * self.value_matrix
+        force_zero_diagonal(A_sim)
         b_sim = np.array(self.b_vector, dtype=float)
         for i in range(N):
             if not self.active_nodes[i].get():
                 A_sim[i, :] = 0.0
                 A_sim[:, i] = 0.0
                 b_sim[i] = 0.0
-                A_sim[i][i] = 1
+                A_sim[i][i] = 0.0
         
         fitness_score = self.calculate_fitness_py(A_sim, b_sim)
         self.simulation_fitness_label.config(text=f"Fitness Simulado: {fitness_score:.4f}")
@@ -281,17 +467,13 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         self._update_graph_node_colors()
 
     def _calculate_solution(self, generation_index):
-        if not self.min_matrix or generation_index >= len(self.genes_history):
+        if self.value_matrix is None or generation_index >= len(self.genes_history):
             return None
         genes_flat = self.genes_history[generation_index]
         positions = np.array([genes_flat[i:i+N] for i in range(0, len(genes_flat), N)])
-        random.seed(0) 
-        tester = np.array(generate_tester(self.min_matrix, self.max_matrix))
-        A = positions * tester
-        try:
-            return np.linalg.solve(A, np.array(self.b_vector))
-        except np.linalg.LinAlgError:
-            return None
+        A = positions * self.value_matrix
+        force_zero_diagonal(A)
+        return self._solve_for_current_model(A, np.array(self.b_vector, dtype=float))
 
     def format_genes(self, genes_list):
         return "\n".join(" ".join(map(str, genes_list[i:i+N])) for i in range(0, len(genes_list), N))
@@ -341,7 +523,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             ))
             
     def get_color_from_value(self, val, vmin, vmax):
-        """Mapeia um valor para uma cor HEX em um gradiente do Vermelho (pior) para Verde (melhor)"""
         if vmax == vmin:
             norm = 0.5
         else:
@@ -356,11 +537,9 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         genes_flat = self.genes_history[generation_index]
         self.adjacency_matrix = [genes_flat[i:i+N] for i in range(0, len(genes_flat), N)]
 
-        # --- LÓGICA DE CÁLCULO DE FITNESS PARA COR DE NÓS E ARESTAS ---
         positions = np.array(self.adjacency_matrix)
-        random.seed(0) 
-        tester = np.array(generate_tester(self.min_matrix, self.max_matrix))
-        A_base = positions * tester
+        A_base = positions * self.value_matrix
+        force_zero_diagonal(A_base)
         b_base = np.array(self.b_vector, dtype=float)
         
         base_fitness = self.calculate_fitness_py(A_base, b_base)
@@ -372,9 +551,8 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             A_sim[i, :] = 0.0
             A_sim[:, i] = 0.0
             b_sim[i] = 0.0
-            A_sim[i][i] = 1
+            A_sim[i][i] = 0.0
             fit = self.calculate_fitness_py(A_sim, b_sim)
-            # O impacto é o quanto o fitness cai se removermos o nó (maior impacto = mais importante)
             node_impacts[i] = base_fitness - fit  
 
         edge_impacts = {}
@@ -387,7 +565,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                     fit = self.calculate_fitness_py(A_sim, b_base)
                     edge_impacts[(i, j)] = base_fitness - fit
 
-        # Mapeando os impactos para Cores
         min_node = min(node_impacts.values()) if node_impacts else 0
         max_node = max(node_impacts.values()) if node_impacts else 0
         self.node_base_colors = {i: self.get_color_from_value(node_impacts[i], min_node, max_node) for i in range(N)}
@@ -395,7 +572,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         min_edge = min(edge_impacts.values()) if edge_impacts else 0
         max_edge = max(edge_impacts.values()) if edge_impacts else 0
         self.edge_base_colors = {e: self.get_color_from_value(edge_impacts[e], min_edge, max_edge) for e in edge_impacts}
-        # ----------------------------------------------------------------
 
         canvas_width = self.graph_canvas.winfo_width()
         canvas_height = self.graph_canvas.winfo_height()
@@ -408,7 +584,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         self.node_items.clear()
         self.edge_items.clear()
 
-        # Posicionamento via NetworkX
         G = nx.Graph()
         G.add_nodes_from(range(N))
         for i in range(N):
@@ -416,7 +591,14 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                 if self.adjacency_matrix[i][j] == 1:
                     G.add_edge(i, j)
         
-        pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+       # Configura o layout do grafo apenas na primeira vez para não travar a UI
+        if self.graph_positions is None:
+            G_temp = nx.Graph()
+            G_temp.add_nodes_from(range(N))
+            # Cria um layout circular ou usa spring_layout num grafo totalmente conectado
+            self.graph_positions = nx.circular_layout(G_temp) # Muito mais rápido e limpo!
+        
+        pos = self.graph_positions
         
         xs = [coords[0] for coords in pos.values()]
         ys = [coords[1] for coords in pos.values()]
@@ -441,7 +623,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             
             self.node_coords[i] = (final_x, final_y)
 
-        # Desenhar Arestas (Coloridas de acordo com a influência da conexão)
         for i in range(N):
             for j in range(i + 1, N):
                 if self.adjacency_matrix[i][j] == 1:
@@ -451,7 +632,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                     edge = self.graph_canvas.create_line(x1, y1, x2, y2, fill=color, width=2.0)
                     self.edge_items[(i, j)] = edge
 
-        # Desenhar Nós (Coloridos de acordo com o fitness individual)
         node_radius = 12
         for i in range(N):
             x, y = self.node_coords[i]
@@ -467,7 +647,6 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             self.graph_canvas.tag_bind(node_tag, '<Leave>', self._on_node_leave)
 
     def _update_graph_node_colors(self):
-        """Atualiza a cor dos nós do grafo com base em seu estado ativo e seu fitness original."""
         for i in self.node_items:
             node_item = self.node_items[i]
             if self.active_nodes[i].get():
@@ -480,13 +659,11 @@ class GeneticAlgoAnalyzer(ttk.Frame):
         if not self.active_nodes[node_id].get():
             return
 
-        # Esmaecer todos para dar foco
         for i in self.node_items:
             self.graph_canvas.itemconfig(self.node_items[i], fill='#f0f0f0', outline='lightgrey')
         for edge in self.edge_items.values():
             self.graph_canvas.itemconfig(edge, fill='#f0f0f0')
 
-        # Destaque o nó em azul (para não confundir com Vermelho/Verde do fitness)
         self.graph_canvas.itemconfig(self.node_items[node_id], fill='blue', outline='black')
 
         for neighbor_id in range(N):
@@ -498,16 +675,14 @@ class GeneticAlgoAnalyzer(ttk.Frame):
                 self.graph_canvas.itemconfig(self.node_items[neighbor_id], fill='cyan', outline='black')
                 
     def _on_node_leave(self, event):
-        # Retornar as cores originais das arestas
         for edge_key, edge in self.edge_items.items():
             color = self.edge_base_colors.get(edge_key, 'lightgrey')
             self.graph_canvas.itemconfig(edge, fill=color, width=2.0)
         
-        # Retornar as cores originais dos nós
         self._update_graph_node_colors()
 
-    def on_slider_change(self, val):
-        generation_idx = int(val)
+    def on_slider_change(self, event=None):
+        generation_idx = int(self.slider.get())
         self.update_displays(generation_idx)
         self.entry_gen.delete(0, tk.END)
         self.entry_gen.insert(0, str(self.generations[generation_idx]))
@@ -522,22 +697,18 @@ class GeneticAlgoAnalyzer(ttk.Frame):
             print("Entrada manual inválida.")
 
 def build_graph_frame(parent):
-    generations, global_fitness, generational_fitness, genes_history = load_history_data()
-    min_matrix, max_matrix = load_tester_matrices()
-    b_vector = load_b_vector()
-
-    if not generations or not b_vector:
-        raise RuntimeError("Dados insuficientes para carregar gráficos")
+    data = collect_graph_data()
+    if data["missing"]:
+        raise RuntimeError("Dados insuficientes para carregar gráficos: " + ", ".join(data["missing"]))
 
     frame = GeneticAlgoAnalyzer(
         parent,
-        generations,
-        global_fitness,
-        generational_fitness,
-        genes_history,
-        min_matrix,
-        max_matrix,
-        b_vector
+        data["generations"],
+        data["global_fitness"],
+        data["generational_fitness"],
+        data["genes_history"],
+        data["value_matrix"],
+        data["b_vector"]
     )
     frame.pack(fill="both", expand=True)
     return frame

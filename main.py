@@ -5,8 +5,10 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import os
 import graph
+
 ctk.set_appearance_mode("Dark") 
 ctk.set_default_color_theme("blue")
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -28,17 +30,12 @@ class App(ctk.CTk):
         self.scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
         self.scalar_inputs = {}
-        self.matrix_inputs = {}
-        self.vector_inputs = {}
+        # NOVO: Dicionário para armazenar as matrizes apenas na memória, sem renderizar
+        self.in_memory_matrices = {}
 
         self.create_scalar_inputs()
 
-        self.btn_update_grid = ctk.CTkButton(self.scroll_frame, text="Gerar Grades (Baseado em N)", 
-                                             command=self.generate_matrix_grids, fg_color="#3B8ED0")
-        self.btn_update_grid.pack(pady=10, fill="x")
-
-        self.matrices_container = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
-        self.matrices_container.pack(fill="both", expand=True)
+        # REMOVIDO: Botão de Gerar Grades e o container de matrizes
 
         self.controls_frame = ctk.CTkFrame(self.left_container, fg_color="transparent")
         self.controls_frame.pack(fill="x", padx=5, pady=10)
@@ -79,16 +76,23 @@ class App(ctk.CTk):
         self.plot_update_interval = 2
         
     def load_full_graph_view(self):
-        # Remove tudo do painel direito
         for widget in self.right_frame.winfo_children():
             widget.destroy()
 
-        # Cria frame 100%
         graph_container = ctk.CTkFrame(self.right_frame)
         graph_container.pack(fill="both", expand=True)
 
-        # Injeta o conteúdo do graph.py
-        graph.build_graph_frame(graph_container)
+        try:
+            graph.build_graph_frame(graph_container)
+        except Exception as e:
+            msg = str(e)
+            label = ctk.CTkLabel(
+                graph_container,
+                text=f"Não foi possível carregar a visualização final.\n{msg}",
+                justify="left"
+            )
+            label.pack(padx=20, pady=20, anchor="w")
+            self.log_message(f"Erro ao carregar visualização final: {msg}")
 
     def update_graph(self, x, y):
         self.x_data.append(float(x))
@@ -101,12 +105,14 @@ class App(ctk.CTk):
             self.ax.relim()
             self.ax.autoscale_view()
             self.canvas.draw()
-            self.plot_update_counter = 0 # Reseta o contador
+            self.plot_update_counter = 0 
+
     def create_scalar_inputs(self):
         fields = [
             ("N", "3"), ("POP_SIZE", "100"), ("GEN", "1000"), ("MU_TAX_BASE", "0.01"),
             ("TOURNAMENT_SIZE", "20"), ("EVAL_MATRICES", "20"), 
-            ("EVAL_LOOPS", "20"), ("REGEN_INTERVAL", "20")
+            ("EVAL_LOOPS", "20"), ("REGEN_INTERVAL", "20"),
+            ("fitness_model", "analitica")
         ]
         
         for label_text, default_val in fields:
@@ -119,74 +125,21 @@ class App(ctk.CTk):
             
             self.scalar_inputs[label_text] = entry
 
-    def generate_matrix_grids(self):
-        for widget in self.matrices_container.winfo_children():
-            widget.destroy()
-        
-        self.matrix_inputs = {}
-        self.vector_inputs = {}
-
-        try:
-            n_val = int(self.scalar_inputs["N"].get())
-        except ValueError:
-            self.log_message("Erro: N deve ser um número inteiro.")
-            return
-
-        matrices_sections = ["MIN_MATRIX", "MAX_MATRIX", "INITIAL_POSITIONS"]
-        vector_sections = ["MAX_CONNECTIONS", "B_VECTOR"]
-
-        for section in matrices_sections:
-            self.create_grid_section(section, n_val, n_val, is_vector=False)
-
-        for section in vector_sections:
-            self.create_grid_section(section, 1, n_val, is_vector=True)
-
-    def create_grid_section(self, title, rows, cols, is_vector):
-        frame = ctk.CTkFrame(self.matrices_container)
-        frame.pack(pady=10, fill="x")
-
-        lbl = ctk.CTkLabel(frame, text=f"[{title}]", font=("Arial", 12, "bold"))
-        lbl.pack(pady=5)
-
-        grid_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        grid_frame.pack()
-
-        entry_list = []
-        for r in range(rows):
-            row_entries = []
-            for c in range(cols):
-                entry = ctk.CTkEntry(grid_frame, width=40, height=25)
-                entry.grid(row=r, column=c, padx=2, pady=2)
-                row_entries.append(entry)
-            
-            if is_vector:
-                entry_list = row_entries
-            else:
-                entry_list.append(row_entries)
-
-        if is_vector:
-            self.vector_inputs[title] = entry_list
-        else:
-            self.matrix_inputs[title] = entry_list
+    # REMOVIDO: generate_matrix_grids e create_grid_section
 
     def save_setup(self):
         try:
             with open("setup.temp", "w") as f:
+                # 1. Salva os escalares editados na UI
                 for key, entry in self.scalar_inputs.items():
                     f.write(f"{key}={entry.get()}\n")
                 f.write("\n")
 
-                for key, rows in self.matrix_inputs.items():
+                # 2. Salva as matrizes que estavam na memória de volta no arquivo
+                for key, rows in self.in_memory_matrices.items():
                     f.write(f"[{key}]\n")
                     for row in rows:
-                        values = [e.get() for e in row]
-                        f.write(" ".join(values) + "\n")
-                    f.write("\n")
-
-                for key, cols in self.vector_inputs.items():
-                    f.write(f"[{key}]\n")
-                    values = [e.get() for e in cols]
-                    f.write(" ".join(values) + "\n")
+                        f.write(" ".join(row) + "\n")
                     f.write("\n")
             
             self.log_message("Arquivo setup.temp salvo com sucesso!")
@@ -197,7 +150,7 @@ class App(ctk.CTk):
 
     def load_existing_setup(self):
         if not os.path.exists("setup.temp"):
-            self.generate_matrix_grids()
+            self.log_message("Arquivo setup.temp não encontrado. Operando apenas com escalares padrão.")
             return
 
         try:
@@ -228,42 +181,24 @@ class App(ctk.CTk):
             if current_section:
                 parsed_matrices[current_section] = matrix_buffer
 
+            # Atualiza os inputs escalares visuais
             for k, v in data_scalars.items():
                 if k in self.scalar_inputs:
                     self.scalar_inputs[k].delete(0, "end")
                     self.scalar_inputs[k].insert(0, v)
 
-            self.generate_matrix_grids()
-
-            for key, grid_widgets in self.matrix_inputs.items():
-                if key in parsed_matrices:
-                    data_rows = parsed_matrices[key]
-                    for r, row_widgets in enumerate(grid_widgets):
-                        if r < len(data_rows):
-                            for c, widget in enumerate(row_widgets):
-                                if c < len(data_rows[r]):
-                                    widget.delete(0, "end")
-                                    widget.insert(0, data_rows[r][c])
-
-            for key, grid_widgets in self.vector_inputs.items():
-                if key in parsed_matrices and len(parsed_matrices[key]) > 0:
-                    data_vals = parsed_matrices[key][0]
-                    for c, widget in enumerate(grid_widgets):
-                        if c < len(data_vals):
-                            widget.delete(0, "end")
-                            widget.insert(0, data_vals[c])
+            # Guarda as matrizes lidas na memória para salvar depois
+            self.in_memory_matrices = parsed_matrices
             
-            self.log_message("setup.temp carregado.")
+            self.log_message("setup.temp carregado (matrizes salvas em memória).")
 
         except Exception as e:
             self.log_message(f"Erro ao ler arquivo: {e}")
-
 
     def start_process(self):
         if self.is_running:
             return
 
-        # Salva automaticamente antes de começar para garantir que o .exe leia o mais recente
         if not self.save_setup():
             return 
 
@@ -280,7 +215,6 @@ class App(ctk.CTk):
         self.btn_stop.configure(state="normal")
         self.is_running = True
 
-        # Inicia thread passando o nome do arquivo se necessário, ou vazio
         self.thread = threading.Thread(target=self.run_async_code, args=("setup.temp",))
         self.thread.start()
 
@@ -298,15 +232,6 @@ class App(ctk.CTk):
     def log_message(self, message):
         self.log_box.insert("end", message + "\n")
         self.log_box.see("end") 
-
-    def update_graph(self, x, y):
-        self.x_data.append(float(x))
-        self.y_data.append(float(y))
-        
-        self.line.set_data(self.x_data, self.y_data)
-        self.ax.relim()
-        self.ax.autoscale_view()
-        self.canvas.draw()
 
     def run_async_code(self, param):
         cmd = ["./genetic_solver.exe", ""] 
@@ -347,10 +272,8 @@ class App(ctk.CTk):
             self.after(0, self.log_message, f"Erro: {str(e)}")
         finally:
             self.after(0, self.cleanup_state)
-        rc = self.process.poll()
-        self.after(0, self.log_message, f"Processo finalizado com código {rc}")
+            
         self.after(0, self.load_full_graph_view)
-
 
     def force_final_draw(self):
         self.line.set_data(self.x_data, self.y_data)
