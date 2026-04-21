@@ -162,7 +162,8 @@ PathMetrics calculate_path_metrics(int **adj) {
     int dist[cfg.N];
     int queue[cfg.N];
     double total_dist = 0.0;
-    int pair_count = 0;
+    int reachable_pairs = 0;
+    int max_possible_pairs = (cfg.N * (cfg.N - 1)) / 2;
     int diameter = 0;
 
     for (int s = 0; s < cfg.N; ++s) {
@@ -174,6 +175,7 @@ PathMetrics calculate_path_metrics(int **adj) {
         while (head < tail) {
             int u = queue[head++];
             for (int v = 0; v < cfg.N; ++v) {
+                // Checa adjacência simétrica
                 if (u != v && adj[u][v] && dist[v] == -1) {
                     dist[v] = dist[u] + 1;
                     queue[tail++] = v;
@@ -182,24 +184,28 @@ PathMetrics calculate_path_metrics(int **adj) {
         }
 
         for (int t = s + 1; t < cfg.N; ++t) {
-            if (dist[t] < 0) {
-                metrics.avg_path = DBL_MAX;
-                metrics.diameter = DBL_MAX;
-                metrics.score = 0.0;
-                return metrics;
+            if (dist[t] > 0) { // Apenas se houver caminho
+                total_dist += dist[t];
+                reachable_pairs++;
+                if (dist[t] > diameter) diameter = dist[t];
             }
-            total_dist += dist[t];
-            if (dist[t] > diameter) diameter = dist[t];
-            pair_count++;
         }
     }
 
-    metrics.avg_path = pair_count > 0 ? total_dist / pair_count : 0.0;
+    // Média apenas dos caminhos que existem
+    metrics.avg_path = (reachable_pairs > 0) ? (total_dist / reachable_pairs) : (double)cfg.N;
     metrics.diameter = (double)diameter;
-    metrics.score = (1.0 / (1.0 + metrics.avg_path)) + (1.0 / (1.0 + metrics.diameter));
+
+    // Fator de conectividade: Penaliza se o grafo não for totalmente conexo
+    // reachable_pairs / max_possible_pairs varia de 0 a 1
+    double connectivity_factor = (double)reachable_pairs / max_possible_pairs;
+
+    // O score agora considera a eficiência do caminho E quão conexo o grafo está
+    // Se não houver caminhos, o score será próximo de 0.
+    metrics.score = connectivity_factor * ((1.0 / (1.0 + metrics.avg_path)) + (1.0 / (1.0 + metrics.diameter)));
+    
     return metrics;
 }
-
 double infer_analitica_c(int **positions, double **matrix_values) {
     if (cfg.N <= 1) return 0.0;
 
@@ -752,8 +758,10 @@ int main(void) {
         
         MultiFitness best_fit_generation = fitnesses[curr_best_idx];
 
-        // CORREÇÃO: Comparação multiobjetivo
-        if (dominates(best_fit_generation, best_fit_global)) {
+        double score_gen = best_fit_generation.f_linear + best_fit_generation.f_path; // Adicione multiplicadores de peso aqui se necessário
+        double score_global = best_fit_global.f_linear + best_fit_global.f_path;
+
+        if (score_gen > score_global) {
             best_fit_global = best_fit_generation;
             copy_positions(population[curr_best_idx], best_positions);
             gens_no_improve = 0;
